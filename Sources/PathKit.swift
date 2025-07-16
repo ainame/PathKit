@@ -1,13 +1,16 @@
 // PathKit - Effortless path operations
 
 #if os(Linux)
-import Glibc
-
-let system_glob = Glibc.glob
+  #if canImport(Musl)
+    import Musl
+    let system_glob = Musl.glob
+  #else
+    import Glibc
+    let system_glob = Glibc.glob
+  #endif
 #else
-import Darwin
-
-let system_glob = Darwin.glob
+  import Darwin
+  let system_glob = Darwin.glob
 #endif
 
 import Foundation
@@ -22,7 +25,7 @@ public struct Path {
   internal let path: String
 
   internal static let fileManager = FileManager.default
-  
+
   internal let fileSystemInfo: FileSystemInfo
 
   // MARK: Init
@@ -35,7 +38,7 @@ public struct Path {
   public init(_ path: String) {
     self.init(path, fileSystemInfo: DefaultFileSystemInfo())
   }
-    
+
   internal init(_ path: String, fileSystemInfo: FileSystemInfo) {
     self.path = path
     self.fileSystemInfo = fileSystemInfo
@@ -44,7 +47,7 @@ public struct Path {
   internal init(fileSystemInfo: FileSystemInfo) {
     self.init("", fileSystemInfo: fileSystemInfo)
   }
-    
+
   /// Create a Path by joining multiple path components together
   public init<S : Collection>(components: S) where S.Iterator.Element == String {
     let path: String
@@ -169,7 +172,7 @@ extension Path {
     let home = Path.home.string
     guard let homeRange = self.path.range(of: home, options: rangeOptions) else { return self }
     let withoutHome = Path(self.path.replacingCharacters(in: homeRange, with: ""))
-    
+
     if withoutHome.path.isEmpty || withoutHome.path == Path.separator {
         return Path("~")
     } else if withoutHome.isAbsolute {
@@ -661,7 +664,7 @@ extension Path : Sequence {
       return DirectoryEnumerator(path: path, options: options)
     }
   }
-  
+
   /// Enumerates the contents of a directory, returning the paths of all files and directories
   /// contained within that directory. These paths are relative to the directory.
   public struct DirectoryEnumerator : IteratorProtocol {
@@ -678,7 +681,7 @@ extension Path : Sequence {
 
     public func next() -> Path? {
       let next = directoryEnumerator?.nextObject()
-      
+
       if let next = next as? URL {
         return Path(next.path)
       }
