@@ -188,6 +188,8 @@ internal struct FoundationGlobEngine: GlobEngine {
 
 #if canImport(Darwin) || (canImport(Glibc) && !canImport(Musl))
 
+/// High-performance C-based glob implementation for Glibc/Darwin systems
+/// Note: Not used on Musl systems - they use FoundationGlobEngine instead
 internal struct CGlobEngine: GlobEngine {
     func glob(_ pattern: String) -> [String] {
         var gt = glob_t()
@@ -218,18 +220,11 @@ internal struct CGlobEngine: GlobEngine {
     }
     
     private func getGlobFlags() -> Int32 {
-        #if os(Linux)
-          #if canImport(Musl)
-            // Musl constants
-            let GLOB_BRACE: Int32 = 0  // Not supported
-            let GLOB_TILDE: Int32 = 0x1000
-            let GLOB_MARK: Int32 = 0x02
-          #else
-            // Glibc constants
-            let GLOB_BRACE = Glibc.GLOB_BRACE
-            let GLOB_TILDE = Glibc.GLOB_TILDE
-            let GLOB_MARK = Glibc.GLOB_MARK
-          #endif
+        #if os(Linux) && canImport(Glibc)
+          // Glibc constants
+          let GLOB_BRACE = Glibc.GLOB_BRACE
+          let GLOB_TILDE = Glibc.GLOB_TILDE
+          let GLOB_MARK = Glibc.GLOB_MARK
         #else
           // Darwin constants
           let GLOB_BRACE = Darwin.GLOB_BRACE
@@ -241,15 +236,10 @@ internal struct CGlobEngine: GlobEngine {
     }
 }
 
-// Platform-specific system_glob function
-#if os(Linux)
-  #if canImport(Musl)
-    import Musl
-    let system_glob = Musl.glob
-  #else
-    import Glibc
-    let system_glob = Glibc.glob
-  #endif
+// Platform-specific system_glob function (only used by CGlobEngine)
+#if os(Linux) && canImport(Glibc)
+  import Glibc
+  let system_glob = Glibc.glob
 #else
   import Darwin
   let system_glob = Darwin.glob
@@ -262,10 +252,11 @@ internal struct CGlobEngine: GlobEngine {
 internal enum GlobEngineFactory {
     static func makeEngine() -> GlobEngine {
         #if canImport(Musl)
-        // Always use Foundation for Musl
+        // Always use Foundation-based implementation for Musl compatibility
+        // Musl's glob() behavior differs from Glibc, so we use consistent Swift implementation
         return FoundationGlobEngine()
         #else
-        // Use C-based for performance on Glibc/Darwin
+        // Use C-based implementation for performance on Glibc/Darwin
         return CGlobEngine()
         #endif
     }
