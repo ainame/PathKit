@@ -4,13 +4,22 @@
   #if canImport(Musl)
     import Musl
     let system_glob = Musl.glob
+    private let GLOB_BRACE: Int32 = 0x200
+    private let GLOB_TILDE: Int32 = 0x1000
+    private let GLOB_MARK: Int32 = 0x8
   #else
     import Glibc
     let system_glob = Glibc.glob
+    private let GLOB_BRACE = Glibc.GLOB_BRACE
+    private let GLOB_TILDE = Glibc.GLOB_TILDE
+    private let GLOB_MARK = Glibc.GLOB_MARK
   #endif
 #else
   import Darwin
   let system_glob = Darwin.glob
+  private let GLOB_BRACE = Darwin.GLOB_BRACE
+  private let GLOB_TILDE = Darwin.GLOB_TILDE
+  private let GLOB_MARK = Darwin.GLOB_MARK
 #endif
 
 import Foundation
