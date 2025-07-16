@@ -13,7 +13,7 @@ let package = Package(
         .library(name: "PathKit", targets: ["PathKit"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/kylef/Spectre.git", .upToNextMinor(from: "0.10.0"))
+        // No external dependencies
     ],
     targets: [
         .target(
@@ -28,8 +28,11 @@ let package = Package(
         ),
         .testTarget(
             name: "PathKitTests", 
-            dependencies: ["PathKit", "Spectre"],
+            dependencies: ["PathKit"],
             path: "Tests/PathKitTests",
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .swiftLanguageMode(.v6)
