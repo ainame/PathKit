@@ -4,9 +4,9 @@
   #if canImport(Musl)
     import Musl
     let system_glob = Musl.glob
-    private let GLOB_BRACE: Int32 = 0x200
+    private let GLOB_BRACE: Int32 = 0  // Musl doesn't support GLOB_BRACE
     private let GLOB_TILDE: Int32 = 0x1000
-    private let GLOB_MARK: Int32 = 0x8
+    private let GLOB_MARK: Int32 = 0x02
   #else
     import Glibc
     let system_glob = Glibc.glob
