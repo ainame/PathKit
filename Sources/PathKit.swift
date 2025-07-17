@@ -10,7 +10,7 @@ public struct Path: Sendable {
     public static let separator = "/"
 
     /// The underlying URL representation (thread-safe)
-    internal let url: URL
+    internal let _url: URL
     
     /// Thread-safe file system info provider
     internal let fileSystemInfo: any FileSystemInfo
@@ -31,7 +31,7 @@ public struct Path: Sendable {
         let expandedPath = path.hasPrefix("~") ? 
             (path as NSString).expandingTildeInPath : path
         
-        self.url = URL(fileURLWithPath: expandedPath)
+        self._url = URL(fileURLWithPath: expandedPath)
         self.fileSystemInfo = fileSystemInfo
     }
     
@@ -49,49 +49,55 @@ public struct Path: Sendable {
     
     /// String representation of the path
     public var string: String {
-        url.path
+        _url.path
+    }
+    
+    /// URL representation of the path
+    public var url: URL {
+        return _url
     }
     
     /// Path components
     public var components: [String] {
-        url.pathComponents
+        _url.pathComponents
     }
     
     /// The last path component
     public var lastComponent: String {
-        url.lastPathComponent
+        _url.lastPathComponent
     }
     
     /// The last path component without its extension
     public var lastComponentWithoutExtension: String {
-        url.deletingPathExtension().lastPathComponent
+        _url.deletingPathExtension().lastPathComponent
     }
     
     /// Returns the path extension
-    public var `extension`: String {
-        url.pathExtension
+    public var `extension`: String? {
+        let pathExtension = _url.pathExtension
+        return pathExtension.isEmpty ? nil : pathExtension
     }
     
     /// Returns the parent directory
-    public var parent: Path {
-        Path(url.deletingLastPathComponent().path, fileSystemInfo: fileSystemInfo)
+    public func parent() -> Path {
+        Path(_url.deletingLastPathComponent().path, fileSystemInfo: fileSystemInfo)
     }
     
     // MARK: - Path Operations
     
     /// Returns absolute path
     public func absolute() -> Path {
-        if url.path.hasPrefix("/") {
+        if _url.path.hasPrefix("/") {
             return self
         }
         let absoluteURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(url.path)
+            .appendingPathComponent(_url.path)
         return Path(absoluteURL.path, fileSystemInfo: fileSystemInfo)
     }
     
     /// Returns if the path is absolute
     public var isAbsolute: Bool {
-        url.path.hasPrefix("/")
+        _url.path.hasPrefix("/")
     }
     
     /// Returns if the path is relative
@@ -101,17 +107,28 @@ public struct Path: Sendable {
     
     /// Normalize the path by removing redundant components
     public func normalize() -> Path {
-        Path(url.standardized.path, fileSystemInfo: fileSystemInfo)
+        Path(_url.standardized.path, fileSystemInfo: fileSystemInfo)
     }
     
     /// Abbreviate path by replacing home directory with ~
     public func abbreviate() -> Path {
         let homePath = (NSHomeDirectory() as NSString).appendingPathComponent("")
-        if url.path.hasPrefix(homePath) {
-            let relativePath = String(url.path.dropFirst(homePath.count - 1))
+        if _url.path.hasPrefix(homePath) {
+            let relativePath = String(_url.path.dropFirst(homePath.count - 1))
             return Path("~" + relativePath, fileSystemInfo: fileSystemInfo)
         }
         return self
+    }
+    
+    /// Returns the path of the item pointed to by a symbolic link
+    public func symlinkDestination() throws -> Path {
+        let symlinkDestination = try FileManager.default.destinationOfSymbolicLink(atPath: string)
+        let symlinkPath = Path(symlinkDestination)
+        if symlinkPath.isRelative {
+            return self.parent().appending(symlinkDestination)
+        } else {
+            return symlinkPath
+        }
     }
     
     // MARK: - File System Queries (Thread-safe)
@@ -160,25 +177,30 @@ public struct Path: Sendable {
     
     /// Append a path component
     public func appending(_ component: String) -> Path {
-        Path(url.appendingPathComponent(component).path, fileSystemInfo: fileSystemInfo)
+        Path(_url.appendingPathComponent(component).path, fileSystemInfo: fileSystemInfo)
     }
     
     /// Append a path extension
     public func appendingExtension(_ ext: String) -> Path {
-        Path(url.appendingPathExtension(ext).path, fileSystemInfo: fileSystemInfo)
+        Path(_url.appendingPathExtension(ext).path, fileSystemInfo: fileSystemInfo)
     }
     
     // MARK: - Directory Operations
     
-    /// Returns the current working directory
-    public static func current() -> Path {
-        Path(FileManager.default.currentDirectoryPath)
+    /// The current working directory of the process
+    public static var current: Path {
+        get {
+            Path(FileManager.default.currentDirectoryPath)
+        }
+        set {
+            _ = FileManager.default.changeCurrentDirectoryPath(newValue.string)
+        }
     }
     
     /// Change current working directory
     @discardableResult
     public static func chdir(_ path: Path) throws -> Path {
-        let previousPath = current()
+        let previousPath = current
         guard FileManager.default.changeCurrentDirectoryPath(path.string) else {
             throw PathError.changeDirectoryFail(path: path)
         }
@@ -192,85 +214,108 @@ public struct Path: Sendable {
         return try closure()
     }
     
-    /// Returns the home directory
-    public static func home() -> Path {
+    /// Changes the current working directory to this path during execution of the closure
+    public func chdir(closure: () throws -> ()) rethrows {
+        let previous = Path.current
+        Path.current = self
+        defer { Path.current = previous }
+        try closure()
+    }
+    
+    /// The path to the user's home directory
+    public static var home: Path {
         Path(NSHomeDirectory())
     }
     
-    /// Returns the temporary directory
-    public static func temporary() -> Path {
+    /// The path to the temporary directory
+    public static var temporary: Path {
         Path(NSTemporaryDirectory())
+    }
+    
+    /// Returns the path of a temporary directory unique for the process
+    public static func processUniqueTemporary() throws -> Path {
+        let path = temporary + ProcessInfo.processInfo.globallyUniqueString
+        if !path.exists {
+            try path.mkdir()
+        }
+        return path
+    }
+    
+    /// Returns the path of a temporary directory unique for each call
+    public static func uniqueTemporary() throws -> Path {
+        let path = try processUniqueTemporary() + UUID().uuidString
+        try path.mkdir()
+        return path
     }
     
     // MARK: - File Operations (Thread-safe)
     
     /// Read file contents as Data
     public func read() throws -> Data {
-        try Data(contentsOf: url)
+        try Data(contentsOf: _url)
     }
     
     /// Read file contents as String
     public func read(_ encoding: String.Encoding = .utf8) throws -> String {
-        try String(contentsOf: url, encoding: encoding)
+        try String(contentsOf: _url, encoding: encoding)
     }
     
     /// Write data to file
     public func write(_ data: Data) throws {
-        try data.write(to: url)
+        try data.write(to: _url)
     }
     
     /// Write string to file
     public func write(_ string: String, encoding: String.Encoding = .utf8) throws {
-        try string.write(to: url, atomically: true, encoding: encoding)
+        try string.write(to: _url, atomically: true, encoding: encoding)
     }
     
     /// Delete the file or directory
     public func delete() throws {
-        try FileManager.default.removeItem(at: url)
+        try FileManager.default.removeItem(at: _url)
     }
     
     /// Move file to another location
-    @discardableResult
-    public func move(_ destination: Path) throws -> Path {
-        try FileManager.default.moveItem(at: url, to: destination.url)
-        return destination
+    public func move(_ destination: Path) throws {
+        try FileManager.default.moveItem(at: _url, to: destination._url)
     }
     
     /// Copy file to another location
-    @discardableResult
-    public func copy(_ destination: Path) throws -> Path {
-        try FileManager.default.copyItem(at: url, to: destination.url)
-        return destination
+    public func copy(_ destination: Path) throws {
+        try FileManager.default.copyItem(at: _url, to: destination._url)
     }
     
     /// Create directory
-    public func mkdir() throws -> Path {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
-        return self
+    public func mkdir() throws {
+        try FileManager.default.createDirectory(at: _url, withIntermediateDirectories: false)
     }
     
     /// Create directory with intermediate directories
-    public func mkpath() throws -> Path {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return self
+    public func mkpath() throws {
+        try FileManager.default.createDirectory(at: _url, withIntermediateDirectories: true)
+    }
+    
+    /// Create a hard link at a new destination
+    public func link(_ destination: Path) throws {
+        try FileManager.default.linkItem(atPath: string, toPath: destination.string)
     }
     
     /// Create symbolic link
     public func symlink(_ destination: Path) throws {
-        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: destination.url)
+        try FileManager.default.createSymbolicLink(at: _url, withDestinationURL: destination._url)
     }
     
     // MARK: - Directory Enumeration
     
     /// Returns directory contents
     public func children() throws -> [Path] {
-        let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+        let contents = try FileManager.default.contentsOfDirectory(at: _url, includingPropertiesForKeys: nil)
         return contents.map { Path($0.path, fileSystemInfo: fileSystemInfo) }
     }
     
     /// Returns all files recursively
     public func recursiveChildren() throws -> [Path] {
-        let paths = try FileManager.default.subpathsOfDirectory(atPath: url.path)
+        let paths = try FileManager.default.subpathsOfDirectory(atPath: _url.path)
         return paths.map { self.appending($0) }
     }
     
@@ -309,13 +354,13 @@ public struct Path: Sendable {
 
 extension Path: Equatable {
     public static func == (lhs: Path, rhs: Path) -> Bool {
-        lhs.url == rhs.url
+        lhs._url == rhs._url
     }
 }
 
 extension Path: Hashable {
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(url)
+        hasher.combine(_url)
     }
 }
 
@@ -332,8 +377,19 @@ extension Path: CustomStringConvertible {
 }
 
 extension Path: ExpressibleByStringLiteral {
+    public typealias ExtendedGraphemeClusterLiteralType = StringLiteralType
+    public typealias UnicodeScalarLiteralType = StringLiteralType
+    
     public init(stringLiteral value: String) {
         self.init(value)
+    }
+    
+    public init(extendedGraphemeClusterLiteral path: StringLiteralType) {
+        self.init(stringLiteral: path)
+    }
+    
+    public init(unicodeScalarLiteral path: StringLiteralType) {
+        self.init(stringLiteral: path)
     }
 }
 
@@ -362,6 +418,13 @@ extension Path {
     public static func + (lhs: Path, rhs: Path) -> Path {
         lhs.appending(rhs.string)
     }
+}
+
+// MARK: - Pattern Matching
+
+/// Implements pattern-matching for paths
+public func ~=(lhs: Path, rhs: Path) -> Bool {
+    return lhs == rhs || lhs.normalize() == rhs.normalize()
 }
 
 // MARK: - Sequence Support
@@ -418,7 +481,7 @@ public struct PathDirectoryEnumerator: Sequence, IteratorProtocol {
         self.basePath = path
         let fileManagerOptions = FileManager.DirectoryEnumerationOptions(rawValue: options.rawValue)
         self.enumerator = FileManager.default.enumerator(
-            at: path.url,
+            at: path._url,
             includingPropertiesForKeys: nil,
             options: fileManagerOptions
         )
