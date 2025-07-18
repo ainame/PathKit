@@ -7,7 +7,7 @@ let package = Package(
         .library(name: "PathKit", targets: ["PathKit"]),
     ],
     dependencies: [
-        // No external dependencies
+        .package(url: "https://github.com/kylef/Spectre.git", from: "0.10.1"),
     ],
     targets: [
         .target(
@@ -17,7 +17,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PathKitTests",
-            dependencies: ["PathKit"],
+            dependencies: ["PathKit", "Spectre"],
             path: "Tests/PathKitTests",
             resources: [
                 .copy("Fixtures")

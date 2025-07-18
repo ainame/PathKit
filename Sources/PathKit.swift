@@ -1,16 +1,12 @@
 // PathKit - Effortless path operations
 
-#if os(Linux)
-import Glibc
-
-let system_glob = Glibc.glob
-#else
-import Darwin
-
-let system_glob = Darwin.glob
-#endif
-
 import Foundation
+
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc) && !canImport(Musl)
+import Glibc
+#endif
 
 
 /// Represents a filesystem path.
@@ -21,7 +17,7 @@ public struct Path {
   /// The underlying string representation
   internal let path: String
 
-  internal static let fileManager = FileManager.default
+  nonisolated(unsafe) internal static let fileManager = FileManager.default
   
   internal let fileSystemInfo: FileSystemInfo
 
@@ -587,33 +583,8 @@ extension Path {
 
 extension Path {
   public static func glob(_ pattern: String) -> [Path] {
-    var gt = glob_t()
-    guard let cPattern = strdup(pattern) else {
-      fatalError("strdup returned null: Likely out of memory")
-    }
-    defer {
-      globfree(&gt)
-      free(cPattern)
-    }
-
-    let flags = GLOB_TILDE | GLOB_BRACE | GLOB_MARK
-    if system_glob(cPattern, flags, nil, &gt) == 0 {
-#if os(Linux)
-      let matchc = gt.gl_pathc
-#else
-      let matchc = gt.gl_matchc
-#endif
-      return (0..<Int(matchc)).compactMap { index in
-        if let path = String(validatingUTF8: gt.gl_pathv[index]!) {
-          return Path(path)
-        }
-
-        return nil
-      }
-    }
-
-    // GLOB_NOMATCH
-    return []
+    let engine = GlobEngineFactory.makeEngine()
+    return engine.glob(pattern).map { Path($0) }
   }
 
   public func glob(_ pattern: String) -> [Path] {
@@ -621,6 +592,7 @@ extension Path {
   }
 
   public func match(_ pattern: String) -> Bool {
+    #if canImport(Darwin) || (canImport(Glibc) && !canImport(Musl))
     guard let cPattern = strdup(pattern),
           let cPath = strdup(path) else {
       fatalError("strdup returned null: Likely out of memory")
@@ -630,6 +602,11 @@ extension Path {
       free(cPath)
     }
     return fnmatch(cPattern, cPath, 0) == 0
+    #else
+    // Use pattern matching via glob engine for musl compatibility
+    let globResults = GlobEngineFactory.makeEngine().glob(pattern)
+    return globResults.contains(path) || globResults.contains { $0.hasPrefix(path + "/") }
+    #endif
   }
 }
 
@@ -637,15 +614,15 @@ extension Path {
 // MARK: SequenceType
 
 extension Path : Sequence {
-  public struct DirectoryEnumerationOptions : OptionSet {
+  public struct DirectoryEnumerationOptions : OptionSet, Sendable {
     public let rawValue: UInt
     public init(rawValue: UInt) {
       self.rawValue = rawValue
     }
 
-    public static var skipsSubdirectoryDescendants = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsSubdirectoryDescendants.rawValue)
-    public static var skipsPackageDescendants = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsPackageDescendants.rawValue)
-    public static var skipsHiddenFiles = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsHiddenFiles.rawValue)
+    public static let skipsSubdirectoryDescendants = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsSubdirectoryDescendants.rawValue)
+    public static let skipsPackageDescendants = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsPackageDescendants.rawValue)
+    public static let skipsHiddenFiles = DirectoryEnumerationOptions(rawValue: FileManager.DirectoryEnumerationOptions.skipsHiddenFiles.rawValue)
   }
 
   /// Represents a path sequence with specific enumeration options

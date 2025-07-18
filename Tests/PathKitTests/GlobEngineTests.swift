@@ -168,9 +168,9 @@ struct GlobEngineTests {
         assertEnginesMatch(testDir.string + "/*.txt")
         
         // Change to test directory and test relative paths
-        let previousDir = Path.current()
-        try! Path.chdir(testDir)
-        defer { try! Path.chdir(previousDir) }
+        let previousDir = Path.current
+        Path.current = testDir
+        defer { Path.current = previousDir }
         
         assertEnginesMatch("*.txt")
         assertEnginesMatch("*/*.txt")
